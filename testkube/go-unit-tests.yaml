@@ -1,0 +1,40 @@
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: go-unit-tests
+  annotations:
+    testworkflows.testkube.io/description: Runs `go test ./...` for the tk-tests HTTP service.
+  labels:
+    app: tk-tests
+    tool: go
+    category: unit-component-testing
+spec:
+  content:
+    git:
+      uri: https://github.com/igmagollo/tk-tests
+      revision: main
+      # For a private repo, create the secret first:
+      #   kubectl -n testkube-agent create secret generic tk-tests-git --from-literal=token=<PAT>
+      # then uncomment:
+      # tokenFrom:
+      #   secretKeyRef:
+      #     name: tk-tests-git
+      #     key: token
+  container:
+    image: golang:1.24
+    workingDir: /data/repo
+    resources:
+      requests:
+        cpu: 512m
+        memory: 512Mi
+  steps:
+    - name: Run unit tests
+      run:
+        shell: |
+          set -e
+          go vet ./...
+          go test ./... -v -coverprofile=/data/artifacts/coverage.out
+          go tool cover -func=/data/artifacts/coverage.out
+      artifacts:
+        paths:
+          - /data/artifacts/coverage.out

@@ -1,0 +1,56 @@
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: go-api-e2e
+  annotations:
+    testworkflows.testkube.io/description: Starts the tk-tests HTTP service and runs black-box API checks against it.
+  labels:
+    app: tk-tests
+    tool: curl
+    service: api
+    category: api-testing
+spec:
+  content:
+    git:
+      uri: https://github.com/igmagollo/tk-tests
+      revision: main
+      # tokenFrom:
+      #   secretKeyRef:
+      #     name: tk-tests-git
+      #     key: token
+  services:
+    api:
+      image: golang:1.24
+      workingDir: /data/repo
+      content:
+        git:
+          uri: https://github.com/igmagollo/tk-tests
+          revision: main
+          # tokenFrom:
+          #   secretKeyRef:
+          #     name: tk-tests-git
+          #     key: token
+      command:
+        - go
+        - run
+        - ./cmd/server
+      resources:
+        requests:
+          cpu: 512m
+          memory: 512Mi
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 2
+        failureThreshold: 60
+  container:
+    image: curlimages/curl:8.11.1
+    workingDir: /data/repo
+    env:
+      - name: BASE_URL
+        value: http://{{ services.api.0.ip }}:8080
+  steps:
+    - name: Run API checks
+      run:
+        shell: sh test/e2e/api_test.sh
