@@ -26,13 +26,13 @@ cmd/server/main.go        entrypoint
 internal/api/api.go       handlers + routes
 internal/api/api_test.go  unit tests (httptest, no network)
 test/e2e/api_test.sh      black-box checks against $BASE_URL
-scripts/gen-workflows.py  generates the Test Workflows from these sources
+scripts/gen-workflows.py  generates the Test Workflows
 testkube/                 generated Test Workflow definitions
 ```
 
 ## Testkube
 
-Two workflows:
+Two workflows, both cloning this repo via `content.git`:
 
 - **`go-unit-tests`** — runs `go vet` and `go test ./...` in `golang:1.24`, uploads
   `coverage.out` as an artifact.
@@ -40,49 +40,60 @@ Two workflows:
   gated on a `/healthz` readiness probe), then runs `test/e2e/api_test.sh` from a `curl`
   container against `http://{{ services.api.0.ip }}:8080`.
 
+### 1. Create the token secret
+
+The workflows clone with a GitHub token read from a Kubernetes secret in the agent's
+namespace. Create it once:
+
+```sh
+make tk-secret GITHUB_TOKEN=ghp_xxx
+# equivalent to:
+# kubectl -n tk-agent create secret generic tk-tests-git --from-literal=token=ghp_xxx
+```
+
+A fine-grained PAT with **Contents: read** on this repo is enough. The secret name/key
+(`tk-tests-git` / `token`) is referenced by `GIT_SECRET_NAME` / `GIT_SECRET_KEY` in
+`scripts/gen-workflows.py`; the username is fixed to `x-access-token`, which GitHub
+ignores for PATs.
+
+### 2. Apply and run
+
 ```sh
 make tk-apply            # regenerate + create/update both workflows
 make tk-run              # ...and run them
 
-kubectl testkube run testworkflow go-unit-tests -f
-kubectl testkube run testworkflow go-api-e2e -f
+kubectl testkube run testworkflow go-unit-tests --target testkube.io/source=cloud -f
+kubectl testkube run testworkflow go-api-e2e --target testkube.io/source=cloud -f
 ```
 
-### Why the sources are inlined
+Since the workflows clone from GitHub, push before running — a run tests `main` as it is
+on the remote, not the working tree.
 
-The workflows carry the Go sources and the e2e script inline via `content.files` instead
-of the usual `content.git`, because this cluster cannot clone the repo. `scripts/gen-workflows.py`
-builds those YAML files from the files on disk, so the repo stays the single source of
-truth — **run `make tk-workflows` (or `make tk-apply`) after changing any source**, or the
-workflows will keep testing the previous version.
-
-Two other approaches were tried and did not work here:
-
-- `content.git` — the cluster cannot reach/clone this repo.
-- A locally built image side-loaded with `kind load docker-image` — Testkube resolves image
-  metadata from a registry before scheduling, so an image that exists only on the node
-  aborts the execution with *"the runner could not start the execution"*.
-
-If the cluster later gets access to the repo, switching back to git is a small edit to
-`scripts/gen-workflows.py`: replace the `content.files` blocks with
-
-```yaml
-  content:
-    git:
-      uri: https://github.com/igmagollo/tk-tests
-      revision: main
-      tokenFrom:
-        secretKeyRef:
-          name: tk-tests-git   # kubectl -n tk-agent create secret generic tk-tests-git --from-literal=token=<PAT>
-          key: token
-```
-
-### Runners
+### Runners and the `--target` flag
 
 This environment has two runners: the in-cluster agent (`tk-agent`) and a hosted cloud
-runner. Both run these workflows, since everything they need is public images plus inlined
-content. To pin a run to the local agent:
+runner. Only the in-cluster one can read the token secret, so runs are pinned to it with
+`--target testkube.io/source=cloud` (a label only the local agent carries). `make tk-run`
+does this for you; override with `TK_TARGET=`.
+
+### Fallback: no repo access from the cluster
+
+If the cluster cannot clone the repo, regenerate the workflows with the sources inlined
+via `content.files` — no secret and no runner pinning needed, since everything travels in
+the workflow spec:
 
 ```sh
-kubectl testkube run testworkflow go-unit-tests --target testkube.io/source=cloud
+make tk-apply MODE=files
 ```
+
+The trade-off is that the workflows then test whatever was inlined at generation time, so
+they must be regenerated and re-applied after every source change.
+
+### Troubleshooting
+
+- **`fatal: could not read Username for 'https://github.com'`** — the token secret is
+  missing or empty. Run `make tk-secret GITHUB_TOKEN=...`.
+- **`Failed to run execution: the runner could not start the execution`**, aborting in
+  under a second with nothing in the runner logs — Testkube resolves image metadata from a
+  registry before scheduling, so an image that exists only on the node (e.g. via
+  `kind load docker-image`) cannot be used. Use a registry-hosted image.
