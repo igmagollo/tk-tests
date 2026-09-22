@@ -20,11 +20,6 @@ spec:
         git:
           uri: https://github.com/igmagollo/tk-tests
           revision: main
-          username: x-access-token
-          tokenFrom:
-            secretKeyRef:
-              name: tk-tests-git
-              key: token
       env:
         - name: GOFLAGS
           value: -mod=mod
@@ -48,11 +43,6 @@ spec:
     git:
       uri: https://github.com/igmagollo/tk-tests
       revision: main
-      username: x-access-token
-      tokenFrom:
-        secretKeyRef:
-          name: tk-tests-git
-          key: token
   container:
     image: curlimages/curl:8.11.1
     workingDir: /data/repo

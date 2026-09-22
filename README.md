@@ -40,41 +40,45 @@ Two workflows, both cloning this repo via `content.git`:
   gated on a `/healthz` readiness probe), then runs `test/e2e/api_test.sh` from a `curl`
   container against `http://{{ services.api.0.ip }}:8080`.
 
-### 1. Create the token secret
-
-The workflows clone with a GitHub token read from a Kubernetes secret in the agent's
-namespace. Create it once:
-
-```sh
-make tk-secret GITHUB_TOKEN=ghp_xxx
-# equivalent to:
-# kubectl -n tk-agent create secret generic tk-tests-git --from-literal=token=ghp_xxx
-```
-
-A fine-grained PAT with **Contents: read** on this repo is enough. The secret name/key
-(`tk-tests-git` / `token`) is referenced by `GIT_SECRET_NAME` / `GIT_SECRET_KEY` in
-`scripts/gen-workflows.py`; the username is fixed to `x-access-token`, which GitHub
-ignores for PATs.
-
-### 2. Apply and run
+### Running them
 
 ```sh
 make tk-apply            # regenerate + create/update both workflows
 make tk-run              # ...and run them
 
-kubectl testkube run testworkflow go-unit-tests --target testkube.io/source=cloud -f
-kubectl testkube run testworkflow go-api-e2e --target testkube.io/source=cloud -f
+kubectl testkube run testworkflow go-unit-tests -f
+kubectl testkube run testworkflow go-api-e2e -f
 ```
+
+The repo is public, so the clone is anonymous: no secret, and either runner (the
+in-cluster `tk-agent` or the hosted cloud runner) can execute the workflows.
 
 Since the workflows clone from GitHub, push before running — a run tests `main` as it is
 on the remote, not the working tree.
 
-### Runners and the `--target` flag
+### If the repo goes private again
 
-This environment has two runners: the in-cluster agent (`tk-agent`) and a hosted cloud
-runner. Only the in-cluster one can read the token secret, so runs are pinned to it with
-`--target testkube.io/source=cloud` (a label only the local agent carries). `make tk-run`
-does this for you; override with `TK_TARGET=`.
+Add credentials to the git block in `scripts/gen-workflows.py`:
+
+```yaml
+  content:
+    git:
+      uri: https://github.com/igmagollo/tk-tests
+      revision: main
+      username: x-access-token      # ignored for PATs, but GitHub requires one
+      tokenFrom:
+        secretKeyRef:
+          name: tk-tests-git
+          key: token
+```
+
+Create the secret in the agent namespace, and pin runs to the in-cluster agent — it is
+the only runner that can read cluster secrets:
+
+```sh
+kubectl -n tk-agent create secret generic tk-tests-git --from-literal=token=ghp_xxx
+kubectl testkube run testworkflow go-unit-tests --target testkube.io/source=cloud -f
+```
 
 ### Fallback: no repo access from the cluster
 
@@ -91,8 +95,10 @@ they must be regenerated and re-applied after every source change.
 
 ### Troubleshooting
 
-- **`fatal: could not read Username for 'https://github.com'`** — the token secret is
-  missing or empty. Run `make tk-secret GITHUB_TOKEN=...`.
+- **`fatal: could not read Username for 'https://github.com'`** — git is being asked for
+  credentials, which means the repo is not actually public (GitHub answers a private repo
+  with a prompt, not a 404). Either flip the repo to public or add a token as described
+  above.
 - **`Failed to run execution: the runner could not start the execution`**, aborting in
   under a second with nothing in the runner logs — Testkube resolves image metadata from a
   registry before scheduling, so an image that exists only on the node (e.g. via

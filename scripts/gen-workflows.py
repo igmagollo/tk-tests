@@ -6,9 +6,8 @@ Two content modes:
     python3 scripts/gen-workflows.py             # git mode (default)
     python3 scripts/gen-workflows.py --mode files
 
-git mode clones this repo in the cluster and authenticates with a token read
-from a Kubernetes secret (see GIT_SECRET_* below); create it with
-`make tk-secret GITHUB_TOKEN=...` before running the workflows.
+git mode clones this repo in the cluster. The repo is public, so no credentials
+are involved and either runner can execute the workflows.
 
 files mode inlines the sources into the workflow YAML via `content.files`, for
 when the cluster cannot reach the repo. It needs no secret, but the workflows
@@ -27,11 +26,6 @@ WORKDIR = "/data/repo"
 
 GIT_URI = "https://github.com/igmagollo/tk-tests"
 GIT_REVISION = "main"
-GIT_SECRET_NAME = "tk-tests-git"
-GIT_SECRET_KEY = "token"
-# GitHub wants a username alongside a PAT; the value is ignored for personal
-# access tokens and is the convention for app installation tokens.
-GIT_USERNAME = "x-access-token"
 
 SERVER_SOURCES = ["go.mod", "cmd/server/main.go", "internal/api/api.go"]
 TEST_SOURCES = SERVER_SOURCES + ["internal/api/api_test.go"]
@@ -57,16 +51,16 @@ def indent(block, spaces):
 
 
 def git_content():
-    """Clone the repo, authenticating with the token from GIT_SECRET_NAME."""
+    """Clone the repo anonymously -- it is public, so no credentials needed.
+
+    If it ever goes private again, add a username and a tokenFrom/secretKeyRef
+    here and pin runs to the in-cluster agent, which is the only runner that
+    can read cluster secrets.
+    """
     return f"""content:
   git:
     uri: {GIT_URI}
     revision: {GIT_REVISION}
-    username: {GIT_USERNAME}
-    tokenFrom:
-      secretKeyRef:
-        name: {GIT_SECRET_NAME}
-        key: {GIT_SECRET_KEY}
 """
 
 
